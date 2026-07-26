@@ -1,0 +1,124 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Basic helper function to check if user is signed in
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    // Check if the user is an authorized admin based on email or UID
+    function isAdmin() {
+      return isSignedIn() && 
+             (request.auth.uid == 'Uv9RgwVokTQ4GyVNtogbFxlABhO2' ||
+              (request.auth.token.email != null &&
+               (request.auth.token.email.lower() == 'sonlyhongduc@gmail.com' || 
+                request.auth.token.email.lower() == 'sonlyhongduc.bl@gmail.com' || 
+                request.auth.token.email.lower() == 'sonlyhongduc1@ghn.vn' ||
+                (exists(/databases/$(database)/documents/allowed_users/$(request.auth.token.email.lower())) && 
+                 get(/databases/$(database)/documents/allowed_users/$(request.auth.token.email.lower())).data.role == 'admin'))));
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // Validation Helpers
+    function isValidGmailAccount(data) {
+      return data.email is string && 
+             data.status in ["ACTIVE", "UNUSED", "IN_USE", "LOCKED", "SUSPENDED"];
+    }
+
+    function isValidVaultItem(data) {
+      return data.id is string && 
+             data.account is string && 
+             data.webName is string && 
+             data.createdAt is string && data.updatedAt is string;
+    }
+
+    function isValidAllowedUser(data) {
+      return data.id is string &&
+             data.email is string &&
+             data.role in ["admin", "user"] &&
+             (data.get('emailLimit', 0) is number || data.get('emailLimit', null) == null) &&
+             (data.get('username', '') is string) &&
+             (data.get('isApproved', false) is bool) &&
+             data.createdAt is string && data.updatedAt is string;
+    }
+
+    // Rules for Gmail Accounts
+    match /gmail_accounts/{accountId} {
+      allow read, write: if isAdmin();
+    }
+
+    // Rules for Web Vault
+    match /web_vault/{vaultId} {
+      allow read: if isAdmin();
+      allow create: if isAdmin() && isValidVaultItem(incoming());
+      allow update: if isAdmin() && isValidVaultItem(incoming()) && 
+                    incoming().id == existing().id &&
+                    incoming().createdAt == existing().createdAt;
+      allow delete: if isAdmin();
+    }
+
+    // Rules for Allowed Users
+    match /allowed_users/{userId} {
+      // allow read by username for login purposes, or if it's their own record, or if admin
+      allow read: if true;
+      allow create: if (isAdmin() && isValidAllowedUser(incoming())) ||
+                       (isSignedIn() && incoming().id == request.auth.token.email.lower() &&
+                        isValidAllowedUser(incoming()) && incoming().role == 'user' &&
+                        incoming().isApproved == false);
+      allow update: if isAdmin() && isValidAllowedUser(incoming()) &&
+                    incoming().id == existing().id &&
+                    incoming().createdAt == existing().createdAt;
+      allow delete: if isAdmin();
+    }
+
+    // Rules for Domain Status
+    match /domain_status/{domainId} {
+      allow read: if true;
+      allow create, update, delete: if isAdmin();
+    }
+
+    // Rules for Domain Reports
+    match /domain_reports/{reportId} {
+      allow read: if true;
+      allow create: if true;
+      allow update, delete: if isAdmin();
+    }
+
+    // Rules for Temp Emails Log
+    match /temp_emails_log/{logId} {
+      allow read: if isAdmin();
+      allow create: if true;
+      allow delete: if isAdmin();
+    }
+
+    // Rules for Error Logs
+    match /error_logs/{logId} {
+      allow create: if true;
+      allow read, delete: if isAdmin();
+    }
+
+    // Rules for Test History
+    match /test_history/{historyId} {
+      allow read, create: if isAdmin();
+    }
+
+    // Rules for Temp Email History
+    match /temp_email_history/{historyId} {
+      allow read, delete: if isSignedIn() && (resource.data.ownerEmail == request.auth.token.email.lower() || isAdmin());
+      allow create: if isSignedIn() && request.resource.data.ownerEmail == request.auth.token.email.lower();
+      allow update: if isSignedIn() && (resource.data.ownerEmail == request.auth.token.email.lower() && request.resource.data.ownerEmail == request.auth.token.email.lower() || isAdmin());
+    }
+
+    // Rules for Free Emails
+    match /free_emails/{emailId} {
+      allow read, write: if isSignedIn();
+    }
+  }
+}
